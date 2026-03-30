@@ -7,10 +7,64 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
-fn log_path() -> PathBuf {
-    let date = Zoned::now().strftime("%Y-%m-%d").to_string();
+fn default_log_dir() -> PathBuf {
     let home = std::env::var("HOME").expect("HOME not set");
-    PathBuf::from(home).join("Catch-all").join(format!("{}.md", date))
+    PathBuf::from(home).join("Catch-all")
+}
+
+fn log_path(dir: &PathBuf) -> PathBuf {
+    let date = Zoned::now().strftime("%Y-%m-%d").to_string();
+    dir.join(format!("{}.md", date))
+}
+
+/// Extracts up to `n` significant words from `text` by filtering stop words.
+/// Returns a kebab-case slug suitable for a filename.
+fn slug_from_content(text: &str, n: usize) -> String {
+    const STOP: &[&str] = &[
+        "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+        "of", "with", "by", "from", "up", "as", "is", "was", "are", "were",
+        "be", "been", "being", "have", "has", "had", "do", "does", "did",
+        "will", "would", "could", "should", "may", "might", "shall", "can",
+        "not", "no", "nor", "so", "yet", "this", "that", "these", "those",
+        "i", "me", "my", "we", "our", "you", "your", "it", "its",
+        "he", "she", "they", "them", "their", "what", "which", "who",
+        "just", "also", "about", "into", "then", "than", "when", "there",
+        "its", "am", "if", "how", "out", "get", "got",
+    ];
+
+    let words: Vec<String> = text
+        .split_whitespace()
+        .filter_map(|w| {
+            let clean: String = w.chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+                .to_lowercase();
+            if clean.len() >= 2 && !STOP.contains(&clean.as_str()) {
+                Some(clean)
+            } else {
+                None
+            }
+        })
+        .take(n)
+        .collect();
+
+    if words.is_empty() {
+        "note".to_string()
+    } else {
+        words.join("-")
+    }
+}
+
+/// Path for a standalone note file — named from content, with HH-MM appended on collision.
+fn note_path(dir: &PathBuf, text: &str) -> PathBuf {
+    let slug = slug_from_content(text, 4);
+    let candidate = dir.join(format!("{}.md", slug));
+    if candidate.exists() {
+        let time = Zoned::now().strftime("%H-%M").to_string();
+        dir.join(format!("{}_{}.md", slug, time))
+    } else {
+        candidate
+    }
 }
 
 fn read_tail(path: &PathBuf, n_lines: usize) -> String {
@@ -34,7 +88,16 @@ fn append_entry(path: &PathBuf, text: &str) {
     }
 }
 
-fn activate(application: &gtk::Application) {
+fn write_note(path: &PathBuf, text: &str) {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).write(true).open(path) {
+        let _ = write!(file, "{}", text.trim());
+    }
+}
+
+fn activate(application: &gtk::Application, target_dir: Option<PathBuf>) {
     let window = gtk::ApplicationWindow::new(application);
 
     window.init_layer_shell();
@@ -54,8 +117,11 @@ fn activate(application: &gtk::Application) {
     vbox.set_margin_start(16);
     vbox.set_margin_end(16);
 
-    // --- Tail: last N lines of today's log ---
-    let path = log_path();
+    let default_dir = default_log_dir();
+    let primary_dir = target_dir.clone().unwrap_or_else(|| default_dir.clone());
+
+    // --- Tail: last N lines of today's log (primary destination) ---
+    let path = log_path(&primary_dir);
     let tail_text = read_tail(&path, 8);
 
     let tail_scroll = gtk::ScrolledWindow::new();
@@ -91,11 +157,35 @@ fn activate(application: &gtk::Application) {
     input_scroll.set_child(Some(&text_view));
     vbox.append(&input_scroll);
 
-    // --- Hint ---
-    let hint = gtk::Label::new(Some("Ctrl+Enter  save  ·  Esc  dismiss"));
-    hint.set_halign(gtk::Align::End);
-    hint.set_opacity(0.5);
-    vbox.append(&hint);
+    // --- Hint area ---
+    if target_dir.is_some() {
+        // Two-line hint: primary destination on top, default below
+        let hint_box = gtk::Box::new(Orientation::Vertical, 2);
+        hint_box.set_halign(gtk::Align::End);
+
+        let line1 = gtk::Label::new(Some(&format!(
+            "Ctrl+Enter  →  {}",
+            primary_dir.display()
+        )));
+        line1.set_halign(gtk::Align::End);
+        line1.set_opacity(0.75);
+
+        let line2 = gtk::Label::new(Some(&format!(
+            "Alt+Enter   →  {}  ·  Esc  dismiss",
+            default_dir.display()
+        )));
+        line2.set_halign(gtk::Align::End);
+        line2.set_opacity(0.4);
+
+        hint_box.append(&line1);
+        hint_box.append(&line2);
+        vbox.append(&hint_box);
+    } else {
+        let hint = gtk::Label::new(Some("Ctrl+Enter  save  ·  Esc  dismiss"));
+        hint.set_halign(gtk::Align::End);
+        hint.set_opacity(0.5);
+        vbox.append(&hint);
+    }
 
     // --- Key handling ---
     let key_ctrl = gtk::EventControllerKey::new();
@@ -103,7 +193,8 @@ fn activate(application: &gtk::Application) {
     {
         let app = application.clone();
         let tv = text_view.clone();
-        let p = path.clone();
+        let default_path = log_path(&default_dir);
+        let target = target_dir.clone();
         key_ctrl.connect_key_pressed(move |_, key, _, mods| {
             use gtk4::gdk::{Key, ModifierType};
             match key {
@@ -115,7 +206,21 @@ fn activate(application: &gtk::Application) {
                     let buf = tv.buffer();
                     let text = buf.text(&buf.start_iter(), &buf.end_iter(), false);
                     if !text.trim().is_empty() {
-                        append_entry(&p, &text);
+                        if let Some(ref dir) = target {
+                            // Standalone file named from content
+                            write_note(&note_path(dir, &text), &text);
+                        } else {
+                            append_entry(&default_path, &text);
+                        }
+                    }
+                    app.quit();
+                    glib::Propagation::Stop
+                }
+                Key::Return if mods.contains(ModifierType::ALT_MASK) => {
+                    let buf = tv.buffer();
+                    let text = buf.text(&buf.start_iter(), &buf.end_iter(), false);
+                    if !text.trim().is_empty() {
+                        append_entry(&default_path, &text);
                     }
                     app.quit();
                     glib::Propagation::Stop
@@ -132,7 +237,11 @@ fn activate(application: &gtk::Application) {
 }
 
 fn main() {
+    // Grab our positional arg before GTK consumes argv.
+    let target_dir: Option<PathBuf> = std::env::args().nth(1).map(PathBuf::from);
+
     let app = gtk::Application::new(Some("games.tau.today"), Default::default());
-    app.connect_activate(|a| activate(a));
-    app.run();
+    app.connect_activate(move |a| activate(a, target_dir.clone()));
+    // Pass only the program name so GTK doesn't choke on our path arg.
+    app.run_with_args(&["to-day"]);
 }

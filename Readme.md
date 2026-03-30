@@ -1,7 +1,17 @@
 # TO-DAY
 It's like "TODO", but "TODAY". Get it?
 
-Wayland quick-note input that appends jotted-down notes into `~/Catch-all/YYYY_MM_DD.md` in a `**HH:MM** {content}` format:
+Wayland quick-note input that appends jotted-down notes into `~/Catch-all/YYYY_MM_DD.md` in a `**HH:MM** {content}` format.
+
+Optionally accepts a target folder as an argument — notes can be sent to two destinations in one session:
+
+```
+to-day [TARGET_FOLDER]
+```
+
+- **Ctrl+Enter** — save to `TARGET_FOLDER` (or `~/Catch-all/` if none supplied)
+- **Alt+Enter** — always save to the default `~/Catch-all/`
+- **Esc** — dismiss
 
 ![TO-DAY interface](docs/Interface_v1.0.0.png)
 
@@ -41,11 +51,13 @@ Pick a key combo and bind it to `to-day`. Examples:
 **Hyprland** (`~/.config/hypr/hyprland.conf`):
 ```
 bind = $mainMod, N, exec, to-day
+bind = $mainMod, M, exec, to-day /home/projects/work/thang
 ```
 
 **Sway** (`~/.config/sway/config`):
 ```
 bindsym $mod+n exec to-day
+bindsym $mod+m exec to-day /home/projects/work/thang
 ```
 
 ---
@@ -53,8 +65,14 @@ bindsym $mod+n exec to-day
 # Version history
 
 #### #future
-- [ ] Configurable paths and formats
+- [ ] Configurable default path and format
 - [ ] Better scroll of today's notes
+- [ ] Silent failure when file creation fails — should surface an error
+- [ ] Snap a screenshot (and later: grab the active URL or file path) when making a note — attach it as a "source" of the thinking. Passive context capture.
+
+#### #v0_2_0
+- [x] Optional `TARGET_FOLDER` argument
+- [x] Ctrl+Enter → target (or default); Alt+Enter → always default
 
 #### #v0_1_0
 - [x] Works as a concept
