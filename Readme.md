@@ -3,10 +3,10 @@ It's like "TODO", but "TODAY". Get it?
 
 Wayland quick-note input that appends jotted-down notes into `~/Catch-all/YYYY_MM_DD.md` in a `**HH:MM** {content}` format.
 
-Optionally accepts a target folder as an argument — notes can be sent to two destinations in one session:
+Optionally accepts a target folder as an argument — notes can be sent to one of the two destinations:
 
 ```
-to-day [TARGET_FOLDER]
+to-day {TARGET_FOLDER}
 ```
 
 - **Ctrl+Enter** — save to `TARGET_FOLDER` (or `~/Catch-all/` if none supplied)
@@ -33,7 +33,7 @@ sudo dnf install gtk4-devel gtk4-layer-shell-devel
 ### Build and install
 
 ```sh
-git clone <repo-url>
+git clone https://github.com/Taugeshtu/TO-DAY
 cd TO-DAY
 cargo install --path . --root ~/.local
 ```
@@ -67,8 +67,7 @@ bindsym $mod+m exec to-day /home/projects/work/thang
 #### #future
 - [ ] Configurable default path and format
 - [ ] Better scroll of today's notes
-- [ ] Silent failure when file creation fails — should surface an error
-- [ ] Snap a screenshot (and later: grab the active URL or file path) when making a note — attach it as a "source" of the thinking. Passive context capture.
+- [ ] Surface an error when file creation fails
 
 #### #v0_2_0
 - [x] Optional `TARGET_FOLDER` argument
