@@ -3,13 +3,40 @@ use gio::prelude::*;
 use gtk::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use jiff::Zoned;
+use serde::Deserialize;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use directories::ProjectDirs;
 
-fn default_log_dir() -> PathBuf {
-    let home = std::env::var("HOME").expect("HOME not set");
-    PathBuf::from(home).join("Catch-all")
+#[derive(Deserialize, Default, Clone)]
+struct Config {
+    #[serde(default)]
+    paths: PathConfig,
+}
+
+#[derive(Deserialize, Default, Clone)]
+struct PathConfig {
+    log_dir: Option<String>,
+}
+
+fn load_config() -> Config {
+    ProjectDirs::from("", "", "to-day")
+        .and_then(|proj_dirs| {
+            let path = proj_dirs.config_dir().join("config.toml");
+            fs::read_to_string(path).ok()
+        })
+        .and_then(|content| toml::from_str(&content).ok())
+        .unwrap_or_default()
+}
+
+fn default_log_dir(config: &Config) -> PathBuf {
+    if let Some(ref dir) = config.paths.log_dir {
+        PathBuf::from(dir)
+    } else {
+        let home = std::env::var("HOME").expect("HOME not set");
+        PathBuf::from(home).join("Catch-all")
+    }
 }
 
 fn log_path(dir: &PathBuf) -> PathBuf {
@@ -97,7 +124,7 @@ fn write_note(path: &PathBuf, text: &str) {
     }
 }
 
-fn activate(application: &gtk::Application, target_dir: Option<PathBuf>) {
+fn activate(application: &gtk::Application, target_dir: Option<PathBuf>, config: Config) {
     let window = gtk::ApplicationWindow::new(application);
 
     window.init_layer_shell();
@@ -117,7 +144,7 @@ fn activate(application: &gtk::Application, target_dir: Option<PathBuf>) {
     vbox.set_margin_start(16);
     vbox.set_margin_end(16);
 
-    let default_dir = default_log_dir();
+    let default_dir = default_log_dir(&config);
     let primary_dir = target_dir.clone().unwrap_or_else(|| default_dir.clone());
 
     // --- Tail: last N lines of today's log (primary destination) ---
@@ -239,9 +266,10 @@ fn activate(application: &gtk::Application, target_dir: Option<PathBuf>) {
 fn main() {
     // Grab our positional arg before GTK consumes argv.
     let target_dir: Option<PathBuf> = std::env::args().nth(1).map(PathBuf::from);
+    let config = load_config();
 
     let app = gtk::Application::new(Some("games.tau.today"), Default::default());
-    app.connect_activate(move |a| activate(a, target_dir.clone()));
+    app.connect_activate(move |a| activate(a, target_dir.clone(), config.clone()));
     // Pass only the program name so GTK doesn't choke on our path arg.
     app.run_with_args(&["to-day"]);
 }
