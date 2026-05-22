@@ -4,7 +4,7 @@ use gtk::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use crate::AppState;
 use crate::storage::{
-    default_log_dir, log_path, read_tail, note_path, write_note, append_entry
+    log_path, note_path, read_tail_async, append_entry_async, write_note_async
 };
 
 pub fn activate(application: &gtk::Application, state: AppState) {
@@ -27,12 +27,11 @@ pub fn activate(application: &gtk::Application, state: AppState) {
     vbox.set_margin_start(16);
     vbox.set_margin_end(16);
 
-    let log_dir = default_log_dir(&state.config);
+    let log_dir = state.log_dir.clone();
     let target_dir = state.target_dir.clone();
 
     // --- Tail: last N lines of today's log ---
     let daily_log_path = log_path(&log_dir);
-    let tail_text = read_tail(&daily_log_path, 8);
 
     let tail_scroll = gtk::ScrolledWindow::new();
     tail_scroll.set_max_content_height(110);
@@ -46,7 +45,18 @@ pub fn activate(application: &gtk::Application, state: AppState) {
     tail_view.set_left_margin(4);
     tail_view.set_top_margin(4);
     tail_view.set_bottom_margin(4);
-    tail_view.buffer().set_text(&tail_text);
+    tail_view.buffer().set_text("(loading tail...)");
+    
+    // Spawn tail preview loading asynchronously
+    {
+        let tail_view_clone = tail_view.clone();
+        let daily_log_path_clone = daily_log_path.clone();
+        glib::spawn_future_local(async move {
+            let tail_text = read_tail_async(daily_log_path_clone, 8).await;
+            tail_view_clone.buffer().set_text(&tail_text);
+        });
+    }
+
     tail_scroll.set_child(Some(&tail_view));
     vbox.append(&tail_scroll);
 
@@ -105,6 +115,7 @@ pub fn activate(application: &gtk::Application, state: AppState) {
         let tv = text_view.clone();
         let daily_log_path = daily_log_path.clone();
         let target_dir = target_dir.clone();
+        let window_clone = window.clone();
         key_ctrl.connect_key_pressed(move |_, key, _, mods| {
             use gtk4::gdk::{Key, ModifierType};
             match key {
@@ -115,24 +126,41 @@ pub fn activate(application: &gtk::Application, state: AppState) {
                 Key::Return if mods.contains(ModifierType::CONTROL_MASK) => {
                     let buf = tv.buffer();
                     let text = buf.text(&buf.start_iter(), &buf.end_iter(), false);
-                    if !text.trim().is_empty() {
-                        if let Some(ref dir) = target_dir {
-                            // Standalone file named from content
-                            write_note(&note_path(dir, &text), &text);
-                        } else {
-                            append_entry(&daily_log_path, &text);
-                        }
+                    let text_str = text.to_string();
+                    if !text_str.trim().is_empty() {
+                        window_clone.set_visible(false);
+                        let app_clone = app.clone();
+                        let target_dir_clone = target_dir.clone();
+                        let daily_log_path_clone = daily_log_path.clone();
+                        glib::spawn_future_local(async move {
+                            if let Some(ref dir) = target_dir_clone {
+                                let note_p = note_path(dir, &text_str);
+                                let _ = write_note_async(note_p, text_str).await;
+                            } else {
+                                let _ = append_entry_async(daily_log_path_clone, text_str).await;
+                            }
+                            app_clone.quit();
+                        });
+                    } else {
+                        app.quit();
                     }
-                    app.quit();
                     glib::Propagation::Stop
                 }
                 Key::Return if mods.contains(ModifierType::ALT_MASK) => {
                     let buf = tv.buffer();
                     let text = buf.text(&buf.start_iter(), &buf.end_iter(), false);
-                    if !text.trim().is_empty() {
-                        append_entry(&daily_log_path, &text);
+                    let text_str = text.to_string();
+                    if !text_str.trim().is_empty() {
+                        window_clone.set_visible(false);
+                        let app_clone = app.clone();
+                        let daily_log_path_clone = daily_log_path.clone();
+                        glib::spawn_future_local(async move {
+                            let _ = append_entry_async(daily_log_path_clone, text_str).await;
+                            app_clone.quit();
+                        });
+                    } else {
+                        app.quit();
                     }
-                    app.quit();
                     glib::Propagation::Stop
                 }
                 _ => glib::Propagation::Proceed,

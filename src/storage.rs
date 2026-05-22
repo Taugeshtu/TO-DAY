@@ -1,33 +1,89 @@
-use serde::Deserialize;
-use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
-use directories::ProjectDirs;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use jiff::Zoned;
+use gio::prelude::*;
 
-#[derive(Deserialize, Default, Clone)]
-pub struct Config {
-    #[serde(default)]
-    pub paths: PathConfig,
+const MAGIC: &[u8; 8] = b"TODAYCFG";
+
+pub fn read_embedded_config() -> Option<String> {
+    let exe_path = std::env::current_exe().ok()?;
+    let mut file = File::open(&exe_path).ok()?;
+    let file_len = file.metadata().ok()?.len();
+    if file_len < 12 {
+        return None;
+    }
+    
+    // Read magic signature at the end
+    file.seek(SeekFrom::End(-8)).ok()?;
+    let mut magic_buf = [0u8; 8];
+    file.read_exact(&mut magic_buf).ok()?;
+    if &magic_buf != MAGIC {
+        return None;
+    }
+    
+    // Read length
+    file.seek(SeekFrom::End(-12)).ok()?;
+    let mut len_buf = [0u8; 4];
+    file.read_exact(&mut len_buf).ok()?;
+    let len = u32::from_le_bytes(len_buf) as u64;
+    
+    if file_len < 12 + len {
+        return None;
+    }
+    
+    // Read config string
+    file.seek(SeekFrom::End(-(12 + len as i64))).ok()?;
+    let mut config_buf = vec![0u8; len as usize];
+    file.read_exact(&mut config_buf).ok()?;
+    
+    String::from_utf8(config_buf).ok()
 }
 
-#[derive(Deserialize, Default, Clone)]
-pub struct PathConfig {
-    pub log_dir: Option<String>,
+pub fn patch_embedded_config(new_config: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let exe_path = std::env::current_exe()?;
+    let mut file_bytes = std::fs::read(&exe_path)?;
+    
+    let file_len = file_bytes.len();
+    let mut payload_len = 0;
+    if file_len >= 12 {
+        let magic_start = file_len - 8;
+        if &file_bytes[magic_start..] == MAGIC {
+            let len_start = file_len - 12;
+            let mut len_bytes = [0u8; 4];
+            len_bytes.copy_from_slice(&file_bytes[len_start..magic_start]);
+            let len = u32::from_le_bytes(len_bytes) as usize;
+            if file_len >= 12 + len {
+                payload_len = 12 + len;
+            }
+        }
+    }
+    
+    if payload_len > 0 {
+        file_bytes.truncate(file_len - payload_len);
+    }
+    
+    let config_bytes = new_config.as_bytes();
+    let config_len = config_bytes.len() as u32;
+    file_bytes.extend_from_slice(config_bytes);
+    file_bytes.extend_from_slice(&config_len.to_le_bytes());
+    file_bytes.extend_from_slice(MAGIC);
+    
+    let tmp_path = exe_path.with_extension("tmp_patch");
+    {
+        let mut tmp_file = File::create(&tmp_path)?;
+        tmp_file.write_all(&file_bytes)?;
+    }
+    
+    let metadata = std::fs::metadata(&exe_path)?;
+    std::fs::set_permissions(&tmp_path, metadata.permissions())?;
+    
+    std::fs::rename(&tmp_path, &exe_path)?;
+    Ok(())
 }
 
-pub fn load_config() -> Config {
-    ProjectDirs::from("", "", "to-day")
-        .and_then(|proj_dirs| {
-            let path = proj_dirs.config_dir().join("config.toml");
-            fs::read_to_string(path).ok()
-        })
-        .and_then(|content| toml::from_str(&content).ok())
-        .unwrap_or_default()
-}
-
-pub fn default_log_dir(config: &Config) -> PathBuf {
-    if let Some(ref dir) = config.paths.log_dir {
+pub fn default_log_dir(embedded_config: &Option<String>) -> PathBuf {
+    if let Some(dir) = embedded_config {
         PathBuf::from(dir)
     } else {
         let home = std::env::var("HOME").expect("HOME not set");
@@ -40,8 +96,6 @@ pub fn log_path(dir: &PathBuf) -> PathBuf {
     dir.join(format!("{}.md", date))
 }
 
-/// Extracts up to `n` significant words from `text` by filtering stop words.
-/// Returns a kebab-case slug suitable for a filename.
 pub fn slug_from_content(text: &str, n: usize) -> String {
     const STOP: &[&str] = &[
         "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
@@ -78,7 +132,6 @@ pub fn slug_from_content(text: &str, n: usize) -> String {
     }
 }
 
-/// Path for a standalone note file — named from content, with HH-MM appended on collision.
 pub fn note_path(dir: &PathBuf, text: &str) -> PathBuf {
     let slug = slug_from_content(text, 4);
     let candidate = dir.join(format!("{}.md", slug));
@@ -90,32 +143,71 @@ pub fn note_path(dir: &PathBuf, text: &str) -> PathBuf {
     }
 }
 
-pub fn read_tail(path: &PathBuf, n_lines: usize) -> String {
-    match fs::read_to_string(path) {
-        Ok(content) if !content.trim().is_empty() => {
-            let lines: Vec<&str> = content.lines().collect();
-            let start = lines.len().saturating_sub(n_lines);
-            lines[start..].join("\n")
+fn gio_file_from_path(path: &Path) -> gio::File {
+    gio::File::for_path(path)
+}
+
+pub async fn read_tail_async(path: PathBuf, n_lines: usize) -> String {
+    let file = gio_file_from_path(&path);
+    match file.load_contents_future().await {
+        Ok((contents, _)) if !contents.is_empty() => {
+            if let Ok(content_str) = std::str::from_utf8(&contents) {
+                let trimmed = content_str.trim();
+                if !trimmed.is_empty() {
+                    let lines: Vec<&str> = trimmed.lines().collect();
+                    let start = lines.len().saturating_sub(n_lines);
+                    return lines[start..].join("\n");
+                }
+            }
+            String::from("(no entries yet today)")
         }
         _ => String::from("(no entries yet today)"),
     }
 }
 
-pub fn append_entry(path: &PathBuf, text: &str) {
+fn ensure_parent_dir(path: &Path) {
     if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
-        let time = Zoned::now().strftime("%H:%M").to_string();
-        let _ = writeln!(file, "\n**{}**  {}", time, text.trim());
+        let _ = std::fs::create_dir_all(parent);
     }
 }
 
-pub fn write_note(path: &PathBuf, text: &str) {
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+pub async fn append_entry_async(path: PathBuf, text: String) -> Result<(), gio::glib::Error> {
+    ensure_parent_dir(&path);
+    let file = gio_file_from_path(&path);
+    
+    // Read the existing content first
+    let mut current_bytes = Vec::new();
+    if let Ok((contents, _)) = file.load_contents_future().await {
+        current_bytes.extend_from_slice(&contents);
     }
-    if let Ok(mut file) = fs::OpenOptions::new().create(true).write(true).open(path) {
-        let _ = write!(file, "{}", text.trim());
-    }
+    
+    // Format the new entry
+    let time = Zoned::now().strftime("%H:%M").to_string();
+    let new_entry = format!("\n**{}**  {}\n", time, text.trim());
+    current_bytes.extend_from_slice(new_entry.as_bytes());
+    
+    // Write back
+    let _ = file.replace_contents_future(
+        current_bytes,
+        None,
+        false,
+        gio::FileCreateFlags::REPLACE_DESTINATION,
+    ).await.map_err(|(_, err)| err)?;
+    
+    Ok(())
+}
+
+pub async fn write_note_async(path: PathBuf, text: String) -> Result<(), gio::glib::Error> {
+    ensure_parent_dir(&path);
+    let file = gio_file_from_path(&path);
+    
+    let content_bytes = text.trim().as_bytes().to_vec();
+    let _ = file.replace_contents_future(
+        content_bytes,
+        None,
+        false,
+        gio::FileCreateFlags::REPLACE_DESTINATION,
+    ).await.map_err(|(_, err)| err)?;
+    
+    Ok(())
 }

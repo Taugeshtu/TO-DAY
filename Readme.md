@@ -1,7 +1,7 @@
 > It's like "TODO", but "TODAY". Get it?
 
 ## why
-I wasn't keeping a log of what I work on, have done, or plan to do — and that's a problem! Capture fails because organizing loose, rolling items feels hopeless. With an LLM-assisted inbox that sorts them every morning, it doesn't.
+I wasn't keeping a log of what I work on, have done, or plan to do — and that's a problem! Capture fails because organizing loose, rolling items feels hopeless. With a consistent inbox that gets sorted every morning, it doesn't. (good place to inject LLMs btw)
 
 ## how
 Wayland quick-note input that appends to a daily note file (`{log_dir}/YYYY_MM_DD.md`), or dumps them as `first-four-significant-words.md` into supplied `target_dir`.
@@ -11,12 +11,10 @@ Wayland quick-note input that appends to a daily note file (`{log_dir}/YYYY_MM_D
 ## Usage: daily note file
 Lives in `{log_dir}/YYYY_MM_DD.md`.
 
-`log_dir` is `~/Catch-all` by default, or configured in `~/.config/to-day/config.toml`:
+`log_dir` is `~/Catch-all` by default. It can be configured by permanently patching the binary:
 
-```toml
-[paths]
-# Absolute path to where your daily logs should be stored
-log_dir = "/home/user/Notes/Journal"
+```bash
+to-day --set-log-dir /path/to/your/notes
 ```
 
 You append to a daily note by:
@@ -37,6 +35,7 @@ to-day {target_dir}
 - **Alt+Enter** — goes into daily note
 
 _(if `target_dir` is a file, to-day will make a sibling)_
+
 ---
 
 ## Install
@@ -88,6 +87,9 @@ bindsym $mod+m exec to-day /home/projects/work/thang
 - [ ] Configurable format
 - [ ] Better scroll of today's notes
 - [ ] Surface an error when file creation fails
+
+#### #v0_4_0
+- [x] Configurable default path via self-patching binary
 
 #### #v0_3_0
 - [x] Configurable default path via `~/.config/to-day/config.toml`
