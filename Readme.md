@@ -36,6 +36,7 @@ to-day {target_dir}
 - **Ctrl+Enter** — save to `target_dir` as `first-four-significant-words.md`
 - **Alt+Enter** — goes into daily note
 
+_(if `target_dir` is a file, to-day will make a sibling)_
 ---
 
 ## Install

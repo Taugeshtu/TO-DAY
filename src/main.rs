@@ -12,7 +12,18 @@ pub struct AppState {
 
 fn main() {
     // Grab our positional arg before GTK consumes argv.
-    let target_dir: Option<PathBuf> = std::env::args().nth(1).map(PathBuf::from);
+    let mut target_dir: Option<PathBuf> = std::env::args().nth(1).map(PathBuf::from);
+    if let Some(ref path) = target_dir {
+        if path.is_file() {
+            target_dir = path.parent().map(|p| {
+                if p.as_os_str().is_empty() {
+                    PathBuf::from(".")
+                } else {
+                    p.to_path_buf()
+                }
+            }).or_else(|| Some(PathBuf::from(".")));
+        }
+    }
     let config = storage::load_config();
     let state = AppState {
         target_dir,
