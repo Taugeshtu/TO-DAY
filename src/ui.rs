@@ -27,12 +27,12 @@ pub fn activate(application: &gtk::Application, state: AppState) {
     vbox.set_margin_start(16);
     vbox.set_margin_end(16);
 
-    let default_dir = default_log_dir(&state.config);
-    let primary_dir = state.target_dir.clone().unwrap_or_else(|| default_dir.clone());
+    let log_dir = default_log_dir(&state.config);
+    let target_dir = state.target_dir.clone();
 
-    // --- Tail: last N lines of today's log (primary destination) ---
-    let path = log_path(&primary_dir);
-    let tail_text = read_tail(&path, 8);
+    // --- Tail: last N lines of today's log ---
+    let daily_log_path = log_path(&log_dir);
+    let tail_text = read_tail(&daily_log_path, 8);
 
     let tail_scroll = gtk::ScrolledWindow::new();
     tail_scroll.set_max_content_height(110);
@@ -68,21 +68,21 @@ pub fn activate(application: &gtk::Application, state: AppState) {
     vbox.append(&input_scroll);
 
     // --- Hint area ---
-    if state.target_dir.is_some() {
-        // Two-line hint: primary destination on top, default below
+    if let Some(ref target) = target_dir {
+        // Two-line hint: primary destination (target folder) on top, default log below
         let hint_box = gtk::Box::new(Orientation::Vertical, 2);
         hint_box.set_halign(gtk::Align::End);
 
         let line1 = gtk::Label::new(Some(&format!(
             "Ctrl+Enter  →  {}",
-            primary_dir.display()
+            target.display()
         )));
         line1.set_halign(gtk::Align::End);
         line1.set_opacity(0.75);
 
         let line2 = gtk::Label::new(Some(&format!(
             "Alt+Enter   →  {}  ·  Esc  dismiss",
-            default_dir.display()
+            log_dir.display()
         )));
         line2.set_halign(gtk::Align::End);
         line2.set_opacity(0.4);
@@ -103,8 +103,8 @@ pub fn activate(application: &gtk::Application, state: AppState) {
     {
         let app = application.clone();
         let tv = text_view.clone();
-        let default_path = log_path(&default_dir);
-        let target = state.target_dir.clone();
+        let daily_log_path = daily_log_path.clone();
+        let target_dir = target_dir.clone();
         key_ctrl.connect_key_pressed(move |_, key, _, mods| {
             use gtk4::gdk::{Key, ModifierType};
             match key {
@@ -116,11 +116,11 @@ pub fn activate(application: &gtk::Application, state: AppState) {
                     let buf = tv.buffer();
                     let text = buf.text(&buf.start_iter(), &buf.end_iter(), false);
                     if !text.trim().is_empty() {
-                        if let Some(ref dir) = target {
+                        if let Some(ref dir) = target_dir {
                             // Standalone file named from content
                             write_note(&note_path(dir, &text), &text);
                         } else {
-                            append_entry(&default_path, &text);
+                            append_entry(&daily_log_path, &text);
                         }
                     }
                     app.quit();
@@ -130,7 +130,7 @@ pub fn activate(application: &gtk::Application, state: AppState) {
                     let buf = tv.buffer();
                     let text = buf.text(&buf.start_iter(), &buf.end_iter(), false);
                     if !text.trim().is_empty() {
-                        append_entry(&default_path, &text);
+                        append_entry(&daily_log_path, &text);
                     }
                     app.quit();
                     glib::Propagation::Stop
