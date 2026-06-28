@@ -147,7 +147,7 @@ fn gio_file_from_path(path: &Path) -> gio::File {
     gio::File::for_path(path)
 }
 
-pub async fn read_tail_async(path: PathBuf, n_lines: usize) -> String {
+pub async fn read_daily_tail_async(path: PathBuf, n_lines: usize) -> String {
     let file = gio_file_from_path(&path);
     match file.load_contents_future().await {
         Ok((contents, _)) if !contents.is_empty() => {
@@ -163,6 +163,30 @@ pub async fn read_tail_async(path: PathBuf, n_lines: usize) -> String {
         }
         _ => String::from("(no entries yet today)"),
     }
+}
+
+pub async fn read_folder_notes_tail_async(dir: PathBuf, n_files: usize) -> String {
+    let mut entries = match std::fs::read_dir(&dir) {
+        Ok(read_dir) => read_dir
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .filter_map(|e| {
+                let meta = e.metadata().ok()?;
+                let time = meta.created().or_else(|_| meta.modified()).ok()?;
+                Some((e.file_name().to_string_lossy().into_owned(), time))
+            })
+            .collect::<Vec<_>>(),
+        Err(_) => return String::from("(error reading directory)"),
+    };
+    if entries.is_empty() {
+        return String::from("(no notes in folder yet)");
+    }
+    entries.sort_by(|a, b| b.1.cmp(&a.1));
+    entries.iter()
+        .take(n_files)
+        .map(|(name, _)| format!("- {}", name))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn ensure_parent_dir(path: &Path) {

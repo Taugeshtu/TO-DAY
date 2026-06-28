@@ -85,8 +85,11 @@ bindsym $mod+m exec to-day /home/projects/work/thang
 
 #### #future
 - [ ] Configurable format
-- [ ] Better scroll of today's notes
 - [ ] Surface an error when file creation fails
+
+#### #v0_5_0
+- [x] Better scroll of today's notes
+- [x] Folder preview should shows list of markdown files
 
 #### #v0_4_0
 - [x] Configurable default path via self-patching binary

@@ -4,10 +4,23 @@ use gtk::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use crate::AppState;
 use crate::storage::{
-    log_path, note_path, read_tail_async, append_entry_async, write_note_async
+    log_path, note_path, read_daily_tail_async, read_folder_notes_tail_async, append_entry_async, write_note_async
 };
 
 pub fn activate(application: &gtk::Application, state: AppState) {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(
+        "scrolledwindow, textview, textview text { background: transparent; }
+         .no-scrollbar scrollbar { display: none; }"
+    );
+    if let Some(display) = gtk4::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+
     let window = gtk::ApplicationWindow::new(application);
 
     window.init_layer_shell();
@@ -19,7 +32,7 @@ pub fn activate(application: &gtk::Application, state: AppState) {
     window.set_anchor(Edge::Right, false);
     window.set_anchor(Edge::Bottom, false);
     window.set_margin(Edge::Top, 80);
-    window.set_default_size(640, 300);
+    window.set_default_size(640, 380);
 
     let vbox = gtk::Box::new(Orientation::Vertical, 8);
     vbox.set_margin_top(12);
@@ -34,26 +47,43 @@ pub fn activate(application: &gtk::Application, state: AppState) {
     let daily_log_path = log_path(&log_dir);
 
     let tail_scroll = gtk::ScrolledWindow::new();
-    tail_scroll.set_max_content_height(110);
-    tail_scroll.set_propagate_natural_height(true);
+    tail_scroll.set_min_content_height(160);
+    tail_scroll.set_max_content_height(160);
+    tail_scroll.set_size_request(-1, 160);
+    tail_scroll.set_propagate_natural_height(false);
     tail_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    tail_scroll.add_css_class("no-scrollbar");
 
     let tail_view = gtk::TextView::new();
     tail_view.set_editable(false);
     tail_view.set_cursor_visible(false);
     tail_view.set_wrap_mode(gtk::WrapMode::Word);
-    tail_view.set_left_margin(4);
-    tail_view.set_top_margin(4);
-    tail_view.set_bottom_margin(4);
+    tail_view.set_left_margin(8);
+    tail_view.set_top_margin(8);
+    tail_view.set_bottom_margin(8);
+    tail_view.set_opacity(0.65);
     tail_view.buffer().set_text("(loading tail...)");
     
     // Spawn tail preview loading asynchronously
     {
         let tail_view_clone = tail_view.clone();
+        let target_dir_clone = target_dir.clone();
         let daily_log_path_clone = daily_log_path.clone();
         glib::spawn_future_local(async move {
-            let tail_text = read_tail_async(daily_log_path_clone, 8).await;
-            tail_view_clone.buffer().set_text(&tail_text);
+            let preview_text = if let Some(dir) = target_dir_clone {
+                read_folder_notes_tail_async(dir, 20).await
+            } else {
+                read_daily_tail_async(daily_log_path_clone, 8).await
+            };
+            tail_view_clone.buffer().set_text(&preview_text);
+
+            // Wait 50ms for GTK to layout the text and update vertical adjustment limits
+            glib::timeout_future(std::time::Duration::from_millis(50)).await;
+
+            let buffer = tail_view_clone.buffer();
+            let end_iter = buffer.end_iter();
+            let mark = buffer.create_mark(None, &end_iter, false);
+            tail_view_clone.scroll_to_mark(&mark, 0.0, true, 0.0, 1.0);
         });
     }
 
