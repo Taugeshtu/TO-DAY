@@ -67,6 +67,11 @@ Keys:
 }
 
 fn main() {
+    if std::env::var("GSK_RENDERER").is_err() {
+        unsafe {
+            std::env::set_var("GSK_RENDERER", "cairo");
+        }
+    }
     let args: Vec<String> = std::env::args().collect();
 
     // Check if `--help` or `-h` is passed

@@ -87,6 +87,9 @@ bindsym $mod+m exec to-day /home/projects/work/thang
 - [ ] Configurable format
 - [ ] Surface an error when file creation fails
 
+#### #v0_6_0
+- [x] Cairo rendering instead of Vulkan, to reduce latency from launch to on-screen
+
 #### #v0_5_0
 - [x] Better scroll of today's notes
 - [x] Folder preview should shows list of markdown files
